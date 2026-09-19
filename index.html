@@ -141,6 +141,12 @@
       padding: 16px 18px; margin-bottom: 8px;
     }
     .thought-text { font-size: 0.9rem; color: #ccc; line-height: 1.55; white-space: pre-wrap; }
+    .thought-text.full { display: none; margin-top: 4px; }
+    .toggle-btn {
+      background: none; border: none; color: #6366f1; font-size: 0.78rem;
+      padding: 6px 0 0 0; cursor: pointer; font-weight: 500;
+    }
+    .toggle-btn:hover { text-decoration: underline; background: none; }
     .thought-time { font-size: 0.72rem; color: #444; margin-top: 8px; }
     .empty { color: #333; font-size: 0.875rem; text-align: center; padding: 48px 0; }
   </style>
@@ -605,11 +611,7 @@
         results.innerHTML = '<div class="empty">No matches.</div>'
         return
       }
-      results.innerHTML = data.map(t => `
-        <div class="thought">
-          <div class="thought-text">${esc(t.content)}</div>
-          <div class="thought-time">${fmt(t.created_at)}</div>
-        </div>`).join('')
+      results.innerHTML = data.map(renderThought).join('')
     } catch (e) {
       results.innerHTML = '<div class="empty" style="color:#ef4444">' + e.message + '</div>'
     }
@@ -630,14 +632,40 @@
         list.innerHTML = '<div class="empty">No thoughts yet. Capture something above.</div>'
         return
       }
-      list.innerHTML = data.map(t => `
-        <div class="thought">
-          <div class="thought-text">${esc(t.content)}</div>
-          <div class="thought-time">${fmt(t.created_at)}</div>
-        </div>`).join('')
+      list.innerHTML = data.map(renderThought).join('')
     } catch (e) {
       list.innerHTML = '<div class="empty" style="color:#ef4444">Could not load: ' + e.message + '</div>'
     }
+  }
+
+  const COLLAPSE_AT = 280
+
+  function renderThought(t) {
+    const content = t.content || ''
+    if (content.length <= COLLAPSE_AT) {
+      return `
+        <div class="thought">
+          <div class="thought-text">${esc(content)}</div>
+          <div class="thought-time">${fmt(t.created_at)}</div>
+        </div>`
+    }
+    return `
+      <div class="thought">
+        <div class="thought-text preview">${esc(content.slice(0, COLLAPSE_AT))}…</div>
+        <div class="thought-text full">${esc(content)}</div>
+        <button class="toggle-btn" onclick="toggleThought(this)">Show more</button>
+        <div class="thought-time">${fmt(t.created_at)}</div>
+      </div>`
+  }
+
+  function toggleThought(btn) {
+    const card = btn.closest('.thought')
+    const preview = card.querySelector('.preview')
+    const full = card.querySelector('.full')
+    const expanded = full.style.display === 'block'
+    full.style.display = expanded ? 'none' : 'block'
+    preview.style.display = expanded ? 'block' : 'none'
+    btn.textContent = expanded ? 'Show more' : 'Show less'
   }
 
   function esc(s) {
