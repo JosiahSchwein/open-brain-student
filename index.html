@@ -279,4 +279,378 @@
       '&ndash;': '\u2013', '&hellip;': '\u2026',
       '&aacute;': 'á', '&eacute;': 'é', '&iacute;': 'í', '&oacute;': 'ó', '&uacute;': 'ú',
       '&ntilde;': 'ñ', '&iexcl;': '¡', '&iquest;': '¿',
-      '&Aacute;': 'Á', '&Eacute;': 'É',
+      '&Aacute;': 'Á', '&Eacute;': 'É', '&Iacute;': 'Í', '&Oacute;': 'Ó', '&Uacute;': 'Ú',
+      '&Ntilde;': 'Ñ'
+    }
+    let out = text
+    for (const [k, v] of Object.entries(map)) {
+      out = out.split(k).join(v)
+    }
+    out = out.split('&amp;').join('&')
+    return out
+  }
+
+  function showBanner(html) {
+    const b = document.getElementById('banner')
+    b.innerHTML = html
+    b.style.display = 'block'
+    document.getElementById('dot').className = 'dot error'
+    document.getElementById('statusText').textContent = 'Not connected'
+  }
+
+  async function init() {
+    if (typeof SUPABASE_URL === 'undefined' || SUPABASE_URL.includes('PASTE_YOUR')) {
+      document.getElementById('authScreen').style.display = 'block'
+      document.getElementById('authErr').textContent = 'Setup not complete — check config.js'
+      return
+    }
+    db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+    db.auth.onAuthStateChange((event, session) => {
+      currentUser = session ? session.user : null
+      renderAuthState()
+    })
+
+    const { data: { session } } = await db.auth.getSession()
+    currentUser = session ? session.user : null
+    renderAuthState()
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(() => {})
+    }
+  }
+
+  function renderAuthState() {
+    if (currentUser) {
+      document.getElementById('authScreen').style.display = 'none'
+      document.getElementById('appScreen').style.display = 'block'
+      connectAndLoad()
+    } else {
+      document.getElementById('authScreen').style.display = 'block'
+      document.getElementById('appScreen').style.display = 'none'
+    }
+  }
+
+  async function connectAndLoad() {
+    try {
+      const { error } = await db.from('thoughts').select('id').limit(1)
+      if (error) throw error
+      document.getElementById('dot').className = 'dot connected'
+      document.getElementById('statusText').textContent = 'Connected to your database'
+      document.getElementById('saveBtn').disabled = false
+      await load()
+    } catch (e) {
+      showBanner('Could not connect to your database.<br><br>Error: <code>' + e.message + '</code>')
+    }
+  }
+
+  function toggleAuthMode() {
+    authMode = authMode === 'signin' ? 'signup' : 'signin'
+    document.getElementById('authSubmit').textContent = authMode === 'signin' ? 'Sign In' : 'Create Account'
+    document.getElementById('authToggleText').textContent = authMode === 'signin' ? "Don't have an account?" : 'Already have an account?'
+    document.getElementById('authToggleLink').textContent = authMode === 'signin' ? 'Create one' : 'Sign in'
+    document.getElementById('authErr').textContent = ''
+  }
+
+  async function submitAuth() {
+    const email = document.getElementById('authEmail').value.trim()
+    const password = document.getElementById('authPassword').value
+    const errEl = document.getElementById('authErr')
+    errEl.textContent = ''
+    if (!email || !password) { errEl.textContent = 'Enter an email and password.'; return }
+    try {
+      if (authMode === 'signup') {
+        const { error } = await db.auth.signUp({ email, password })
+        if (error) throw error
+        errEl.style.color = '#22c55e'
+        errEl.textContent = 'Account created. If email confirmation is on, check your inbox — otherwise you are signed in.'
+      } else {
+        const { error } = await db.auth.signInWithPassword({ email, password })
+        if (error) throw error
+      }
+    } catch (e) {
+      errEl.style.color = '#f87171'
+      errEl.textContent = e.message
+    }
+  }
+
+  async function signOut() {
+    await db.auth.signOut()
+  }
+
+  function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name))
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name))
+  }
+
+  async function save() {
+    const input = document.getElementById('input')
+    const text = input.value.trim()
+    if (!text) return
+    const btn = document.getElementById('saveBtn')
+    const msg = document.getElementById('saveMsg')
+    btn.disabled = true
+    btn.textContent = 'Saving...'
+    msg.textContent = ''
+    try {
+      const { error } = await db.from('thoughts').insert({ content: text, user_id: currentUser.id })
+      if (error) throw error
+      input.value = ''
+      msg.textContent = '✓ Saved'
+      msg.className = 'save-msg ok'
+      await load()
+    } catch (e) {
+      msg.textContent = '✗ ' + e.message
+      msg.className = 'save-msg err'
+    } finally {
+      btn.disabled = false
+      btn.textContent = 'Save to Brain'
+    }
+  }
+
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      const active = document.querySelector('.panel.active')
+      if (active && active.id === 'panel-capture') save()
+    }
+  })
+
+  function toggleListening() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) {
+      document.getElementById('micStatus').textContent = 'Voice input is not supported in this browser. Try Chrome or Edge.'
+      return
+    }
+    if (listening) {
+      recognition.stop()
+      return
+    }
+    recognition = new SR()
+    recognition.continuous = true
+    recognition.interimResults = true
+    recognition.lang = 'en-US'
+    let finalText = document.getElementById('voiceText').value
+
+    recognition.onstart = () => {
+      listening = true
+      document.getElementById('micBtn').classList.add('listening')
+      document.getElementById('micStatus').textContent = 'Listening...'
+    }
+    recognition.onresult = (e) => {
+      let interim = ''
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' '
+        else interim += e.results[i][0].transcript
+      }
+      document.getElementById('voiceText').value = finalText + interim
+    }
+    recognition.onerror = (e) => {
+      document.getElementById('micStatus').textContent = 'Error: ' + e.error
+    }
+    recognition.onend = () => {
+      listening = false
+      document.getElementById('micBtn').classList.remove('listening')
+      document.getElementById('micStatus').textContent = 'Tap to speak'
+    }
+    recognition.start()
+  }
+
+  async function saveVoice() {
+    const text = document.getElementById('voiceText').value.trim()
+    const msg = document.getElementById('voiceMsg')
+    if (!text) return
+    try {
+      const { error } = await db.from('thoughts').insert({ content: text, user_id: currentUser.id })
+      if (error) throw error
+      document.getElementById('voiceText').value = ''
+      msg.textContent = '✓ Saved'
+      msg.className = 'save-msg ok'
+      await load()
+    } catch (e) {
+      msg.textContent = '✗ ' + e.message
+      msg.className = 'save-msg err'
+    }
+  }
+
+  function extractYoutubeId(url) {
+    const m = url.match(/(?:youtube\.com.*(?:\?|&)v=|youtu\.be\/)([\w-]{11})/)
+    return m ? m[1] : null
+  }
+
+  async function captureYoutube() {
+    const url = document.getElementById('ytUrl').value.trim()
+    const msg = document.getElementById('ytMsg')
+    const info = document.getElementById('ytInfo')
+    const btn = document.getElementById('ytCaptureBtn')
+    if (!url) { msg.textContent = 'Paste a YouTube URL first.'; msg.className = 'save-msg err'; return }
+    btn.disabled = true
+    btn.textContent = 'Capturing...'
+    msg.textContent = ''
+    info.innerHTML = ''
+    try {
+      const { data, error } = await db.functions.invoke('capture-youtube', { body: { url } })
+      if (error) throw error
+      if (!data.ok) throw new Error(data.error || 'Capture failed')
+      document.getElementById('ytUrl').value = ''
+      msg.textContent = '✓ Saved'
+      msg.className = 'save-msg ok'
+      info.innerHTML = `<div class="hint" style="margin-top:10px;">
+        <strong>${esc(data.title)}</strong><br>
+        ${data.has_transcript ? 'Real transcript captured (via ' + data.fetched_via + ').' : 'No captions were available — saved the video description instead.'}
+      </div>`
+      await load()
+    } catch (e) {
+      msg.textContent = '✗ ' + e.message
+      msg.className = 'save-msg err'
+    } finally {
+      btn.disabled = false
+      btn.textContent = 'Capture automatically'
+    }
+  }
+
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+
+  const pdfDrop = document.getElementById('pdfDrop')
+  const pdfFile = document.getElementById('pdfFile')
+  pdfDrop.addEventListener('click', () => pdfFile.click())
+  pdfDrop.addEventListener('dragover', e => { e.preventDefault(); pdfDrop.classList.add('drag') })
+  pdfDrop.addEventListener('dragleave', () => pdfDrop.classList.remove('drag'))
+  pdfDrop.addEventListener('drop', e => {
+    e.preventDefault(); pdfDrop.classList.remove('drag')
+    if (e.dataTransfer.files[0]) handlePdf(e.dataTransfer.files[0])
+  })
+  pdfFile.addEventListener('change', () => { if (pdfFile.files[0]) handlePdf(pdfFile.files[0]) })
+
+  let currentPdfName = ''
+
+  async function handlePdf(file) {
+    const status = document.getElementById('pdfStatus')
+    currentPdfName = file.name
+    status.textContent = 'Reading ' + file.name + '...'
+    try {
+      const buf = await file.arrayBuffer()
+      const pdf = await pdfjsLib.getDocument({ data: buf }).promise
+      let text = ''
+      for (let i = 1; i <= pdf.numPages; i++) {
+        status.textContent = `Extracting page ${i} of ${pdf.numPages}...`
+        const page = await pdf.getPage(i)
+        const content = await page.getTextContent()
+        text += content.items.map(it => it.str).join(' ') + '\n\n'
+      }
+      document.getElementById('pdfText').value = decodeEntities(text.trim())
+      status.textContent = `Done — extracted ${pdf.numPages} page(s) from ${file.name}`
+    } catch (e) {
+      status.textContent = 'Could not read PDF: ' + e.message
+    }
+  }
+
+  async function savePdf() {
+    const text = document.getElementById('pdfText').value.trim()
+    const msg = document.getElementById('pdfMsg')
+    if (!text) { msg.textContent = 'Nothing to save yet.'; msg.className = 'save-msg err'; return }
+    try {
+      const content = `📄 PDF: ${currentPdfName || 'document'}\n\n${text}`
+      const { error } = await db.from('thoughts').insert({ content, user_id: currentUser.id })
+      if (error) throw error
+      document.getElementById('pdfText').value = ''
+      document.getElementById('pdfStatus').textContent = ''
+      msg.textContent = '✓ Saved'
+      msg.className = 'save-msg ok'
+      await load()
+    } catch (e) {
+      msg.textContent = '✗ ' + e.message
+      msg.className = 'save-msg err'
+    }
+  }
+
+  async function captureUrl() {
+    const url = document.getElementById('articleUrl').value.trim()
+    const msg = document.getElementById('urlMsg')
+    const info = document.getElementById('urlInfo')
+    const btn = document.getElementById('urlCaptureBtn')
+    if (!url) { msg.textContent = 'Paste a URL first.'; msg.className = 'save-msg err'; return }
+    btn.disabled = true
+    btn.textContent = 'Capturing...'
+    msg.textContent = ''
+    info.innerHTML = ''
+    try {
+      const { data, error } = await db.functions.invoke('capture-url', { body: { url } })
+      if (error) throw error
+      if (!data.ok) throw new Error(data.error || 'Capture failed')
+      document.getElementById('articleUrl').value = ''
+      msg.textContent = '✓ Saved'
+      msg.className = 'save-msg ok'
+      info.innerHTML = `<div class="hint" style="margin-top:10px;"><strong>${esc(data.title)}</strong><br>${esc(data.hostname)}</div>`
+      await load()
+    } catch (e) {
+      msg.textContent = '✗ ' + e.message
+      msg.className = 'save-msg err'
+    } finally {
+      btn.disabled = false
+      btn.textContent = 'Capture automatically'
+    }
+  }
+
+  async function runSearch() {
+    const q = document.getElementById('searchBox').value.trim()
+    const results = document.getElementById('searchResults')
+    if (!q) return
+    results.innerHTML = '<div class="empty">Searching...</div>'
+    try {
+      const { data, error } = await db.from('thoughts')
+        .select('*').ilike('content', `%${q}%`)
+        .order('created_at', { ascending: false }).limit(50)
+      if (error) throw error
+      if (!data || data.length === 0) {
+        results.innerHTML = '<div class="empty">No matches.</div>'
+        return
+      }
+      results.innerHTML = data.map(t => `
+        <div class="thought">
+          <div class="thought-text">${esc(t.content)}</div>
+          <div class="thought-time">${fmt(t.created_at)}</div>
+        </div>`).join('')
+    } catch (e) {
+      results.innerHTML = '<div class="empty" style="color:#ef4444">' + e.message + '</div>'
+    }
+  }
+  function clearSearch() {
+    document.getElementById('searchBox').value = ''
+    document.getElementById('searchResults').innerHTML = ''
+  }
+
+  async function load() {
+    const list = document.getElementById('list')
+    try {
+      const { data, error } = await db
+        .from('thoughts').select('*')
+        .order('created_at', { ascending: false }).limit(20)
+      if (error) throw error
+      if (!data || data.length === 0) {
+        list.innerHTML = '<div class="empty">No thoughts yet. Capture something above.</div>'
+        return
+      }
+      list.innerHTML = data.map(t => `
+        <div class="thought">
+          <div class="thought-text">${esc(t.content)}</div>
+          <div class="thought-time">${fmt(t.created_at)}</div>
+        </div>`).join('')
+    } catch (e) {
+      list.innerHTML = '<div class="empty" style="color:#ef4444">Could not load: ' + e.message + '</div>'
+    }
+  }
+
+  function esc(s) {
+    return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+  }
+  function fmt(iso) {
+    return new Date(iso).toLocaleString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    })
+  }
+
+  init()
+</script>
+</body>
+</html>
