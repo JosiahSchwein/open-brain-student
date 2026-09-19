@@ -8,6 +8,8 @@
   <meta name="theme-color" content="#6366f1">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <script src="config.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -186,7 +188,7 @@
     <button class="tab active" data-tab="capture" onclick="switchTab('capture')">Capture</button>
     <button class="tab" data-tab="voice" onclick="switchTab('voice')">Voice</button>
     <button class="tab" data-tab="youtube" onclick="switchTab('youtube')">YouTube</button>
-    <button class="tab" data-tab="pdf" onclick="switchTab('pdf')">PDF</button>
+    <button class="tab" data-tab="pdf" onclick="switchTab('pdf')">Files</button>
     <button class="tab" data-tab="url" onclick="switchTab('url')">URL</button>
     <button class="tab" data-tab="search" onclick="switchTab('search')">Search</button>
   </div>
@@ -230,8 +232,8 @@
 
   <div class="panel" id="panel-pdf">
     <div class="capture">
-      <div class="drop-zone" id="pdfDrop">Drag a PDF here, or click to choose one</div>
-      <input type="file" id="pdfFile" accept="application/pdf" style="display:none;">
+      <div class="drop-zone" id="pdfDrop">Drag a PDF, Word doc, Markdown/text file, or image (PNG/JPG) here, or click to choose one</div>
+      <input type="file" id="pdfFile" accept="application/pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.md,.txt,.png,.jpg,.jpeg,image/png,image/jpeg" style="display:none;">
       <div class="hint" id="pdfStatus" style="margin-top:10px;"></div>
       <textarea id="pdfText" placeholder="Extracted text will appear here — review before saving" rows="6" style="margin-top:12px;"></textarea>
       <div class="row">
@@ -532,6 +534,64 @@
   async function handlePdf(file) {
     const status = document.getElementById('pdfStatus')
     currentPdfName = file.name
+    const lower = file.name.toLowerCase()
+    const isDocx = lower.endsWith('.docx') ||
+      file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    const isPlainText = lower.endsWith('.md') || lower.endsWith('.txt')
+    const isImage = lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg') ||
+      file.type === 'image/png' || file.type === 'image/jpeg'
+
+    if (isPlainText) {
+      status.textContent = 'Reading ' + file.name + '...'
+      try {
+        const text = await file.text()
+        document.getElementById('pdfText').value = decodeEntities(text.trim())
+        status.textContent = `Done — read ${file.name}`
+      } catch (e) {
+        status.textContent = 'Could not read file: ' + e.message
+      }
+      return
+    }
+
+    if (isImage) {
+      status.textContent = 'Running OCR on ' + file.name + '... this can take a moment'
+      try {
+        const { data } = await Tesseract.recognize(file, 'eng', {
+          logger: m => {
+            if (m.status === 'recognizing text') {
+              status.textContent = `Reading text from image... ${Math.round((m.progress || 0) * 100)}%`
+            }
+          }
+        })
+        const text = (data.text || '').trim()
+        if (!text) {
+          status.textContent = `No text found in ${file.name} — OCR only pulls out written/printed text, not general photo content.`
+        } else {
+          document.getElementById('pdfText').value = decodeEntities(text)
+          status.textContent = `Done — extracted text from ${file.name}`
+        }
+      } catch (e) {
+        status.textContent = 'Could not run OCR: ' + e.message
+      }
+      return
+    }
+
+    if (isDocx) {
+      status.textContent = 'Reading ' + file.name + '...'
+      try {
+        const buf = await file.arrayBuffer()
+        const result = await mammoth.extractRawText({ arrayBuffer: buf })
+        document.getElementById('pdfText').value = decodeEntities(result.value.trim())
+        status.textContent = `Done — extracted text from ${file.name}`
+        if (result.messages && result.messages.length) {
+          console.log('mammoth messages:', result.messages)
+        }
+      } catch (e) {
+        status.textContent = 'Could not read Word document: ' + e.message
+      }
+      return
+    }
+
     status.textContent = 'Reading ' + file.name + '...'
     try {
       const buf = await file.arrayBuffer()
@@ -555,7 +615,7 @@
     const msg = document.getElementById('pdfMsg')
     if (!text) { msg.textContent = 'Nothing to save yet.'; msg.className = 'save-msg err'; return }
     try {
-      const content = `📄 PDF: ${currentPdfName || 'document'}\n\n${text}`
+      const content = `📄 File: ${currentPdfName || 'document'}\n\n${text}`
       const { error } = await db.from('thoughts').insert({ content, user_id: currentUser.id })
       if (error) throw error
       document.getElementById('pdfText').value = ''
