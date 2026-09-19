@@ -401,7 +401,8 @@
     btn.textContent = 'Saving...'
     msg.textContent = ''
     try {
-      const { error } = await db.from('thoughts').insert({ content: text, user_id: currentUser.id })
+      const { error } = await db.from('thoughts')
+        .upsert({ content: text, user_id: currentUser.id }, { onConflict: 'dedup_key,user_id', ignoreDuplicates: false })
       if (error) throw error
       input.value = ''
       msg.textContent = '✓ Saved'
@@ -468,7 +469,8 @@
     const msg = document.getElementById('voiceMsg')
     if (!text) return
     try {
-      const { error } = await db.from('thoughts').insert({ content: text, user_id: currentUser.id })
+      const { error } = await db.from('thoughts')
+        .upsert({ content: text, user_id: currentUser.id }, { onConflict: 'dedup_key,user_id', ignoreDuplicates: false })
       if (error) throw error
       document.getElementById('voiceText').value = ''
       msg.textContent = '✓ Saved'
@@ -616,7 +618,8 @@
     if (!text) { msg.textContent = 'Nothing to save yet.'; msg.className = 'save-msg err'; return }
     try {
       const content = `📄 File: ${currentPdfName || 'document'}\n\n${text}`
-      const { error } = await db.from('thoughts').insert({ content, user_id: currentUser.id })
+      const { error } = await db.from('thoughts')
+        .upsert({ content, user_id: currentUser.id }, { onConflict: 'dedup_key,user_id', ignoreDuplicates: false })
       if (error) throw error
       document.getElementById('pdfText').value = ''
       document.getElementById('pdfStatus').textContent = ''
