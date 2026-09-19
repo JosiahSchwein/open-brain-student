@@ -8,6 +8,7 @@
   <meta name="theme-color" content="#6366f1">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
   <script src="config.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -186,7 +187,7 @@
     <button class="tab active" data-tab="capture" onclick="switchTab('capture')">Capture</button>
     <button class="tab" data-tab="voice" onclick="switchTab('voice')">Voice</button>
     <button class="tab" data-tab="youtube" onclick="switchTab('youtube')">YouTube</button>
-    <button class="tab" data-tab="pdf" onclick="switchTab('pdf')">PDF</button>
+    <button class="tab" data-tab="pdf" onclick="switchTab('pdf')">Document</button>
     <button class="tab" data-tab="url" onclick="switchTab('url')">URL</button>
     <button class="tab" data-tab="search" onclick="switchTab('search')">Search</button>
   </div>
@@ -230,8 +231,8 @@
 
   <div class="panel" id="panel-pdf">
     <div class="capture">
-      <div class="drop-zone" id="pdfDrop">Drag a PDF here, or click to choose one</div>
-      <input type="file" id="pdfFile" accept="application/pdf" style="display:none;">
+      <div class="drop-zone" id="pdfDrop">Drag a PDF or Word document (.docx) here, or click to choose one</div>
+      <input type="file" id="pdfFile" accept="application/pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none;">
       <div class="hint" id="pdfStatus" style="margin-top:10px;"></div>
       <textarea id="pdfText" placeholder="Extracted text will appear here — review before saving" rows="6" style="margin-top:12px;"></textarea>
       <div class="row">
@@ -532,6 +533,25 @@
   async function handlePdf(file) {
     const status = document.getElementById('pdfStatus')
     currentPdfName = file.name
+    const isDocx = file.name.toLowerCase().endsWith('.docx') ||
+      file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+
+    if (isDocx) {
+      status.textContent = 'Reading ' + file.name + '...'
+      try {
+        const buf = await file.arrayBuffer()
+        const result = await mammoth.extractRawText({ arrayBuffer: buf })
+        document.getElementById('pdfText').value = decodeEntities(result.value.trim())
+        status.textContent = `Done — extracted text from ${file.name}`
+        if (result.messages && result.messages.length) {
+          console.log('mammoth messages:', result.messages)
+        }
+      } catch (e) {
+        status.textContent = 'Could not read Word document: ' + e.message
+      }
+      return
+    }
+
     status.textContent = 'Reading ' + file.name + '...'
     try {
       const buf = await file.arrayBuffer()
@@ -555,7 +575,7 @@
     const msg = document.getElementById('pdfMsg')
     if (!text) { msg.textContent = 'Nothing to save yet.'; msg.className = 'save-msg err'; return }
     try {
-      const content = `📄 PDF: ${currentPdfName || 'document'}\n\n${text}`
+      const content = `📄 Document: ${currentPdfName || 'document'}\n\n${text}`
       const { error } = await db.from('thoughts').insert({ content, user_id: currentUser.id })
       if (error) throw error
       document.getElementById('pdfText').value = ''
