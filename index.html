@@ -673,7 +673,7 @@
         results.innerHTML = '<div class="empty">No matches.</div>'
         return
       }
-      results.innerHTML = data.results.map(renderThought).join('')
+      results.innerHTML = data.results.map(renderSearchResult).join('')
     } catch (e) {
       results.innerHTML = '<div class="empty" style="color:#ef4444">' + e.message + '</div>'
     }
@@ -718,6 +718,17 @@
         <button class="toggle-btn" onclick="toggleThought(this)">Show more</button>
         <div class="thought-time">${fmt(t.created_at)}</div>
       </div>`
+  }
+
+  function renderSearchResult(t) {
+    const base = renderThought(t)
+    if (!t.matched_chunk) return base
+    const chunkHtml = `
+        <div class="matched-chunk" style="margin-top:10px;padding:8px 12px;border-left:3px solid #8b5cf6;font-size:0.9em">
+          <div style="opacity:0.7;font-size:0.85em;margin-bottom:4px">(from partway through a longer capture)</div>
+          ${esc(t.matched_chunk)}
+        </div>`
+    return base.replace(/<\/div>\s*$/, () => chunkHtml + '</div>')
   }
 
   function toggleThought(btn) {
