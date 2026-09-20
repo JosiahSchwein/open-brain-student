@@ -257,7 +257,7 @@
 
   <div class="panel" id="panel-search">
     <div class="capture">
-      <input type="search" id="searchBox" placeholder="Search everything you've captured">
+      <input type="search" id="searchBox" placeholder="Search by meaning — try a phrase, not just a keyword">
       <div class="row">
         <button onclick="runSearch()">Search</button>
         <button class="secondary" onclick="clearSearch()">Clear</button>
@@ -666,15 +666,14 @@
     if (!q) return
     results.innerHTML = '<div class="empty">Searching...</div>'
     try {
-      const { data, error } = await db.from('thoughts')
-        .select('*').ilike('content', `%${q}%`)
-        .order('created_at', { ascending: false }).limit(50)
+      const { data, error } = await db.functions.invoke('search-thoughts', { body: { query: q, matchCount: 15 } })
       if (error) throw error
-      if (!data || data.length === 0) {
+      if (!data.ok) throw new Error(data.error || 'Search failed')
+      if (!data.results || data.results.length === 0) {
         results.innerHTML = '<div class="empty">No matches.</div>'
         return
       }
-      results.innerHTML = data.map(renderThought).join('')
+      results.innerHTML = data.results.map(renderThought).join('')
     } catch (e) {
       results.innerHTML = '<div class="empty" style="color:#ef4444">' + e.message + '</div>'
     }
