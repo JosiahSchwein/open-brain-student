@@ -78,8 +78,12 @@ Deno.serve(async (req) => {
         await sendTelegramMessage(chatId, `Your ${rows.length} most recent:\n\n${list}`)
       }
     } else {
-      await dbFetch('thoughts', {
+      // Upsert on the auto-derived dedup_key so a repeated message (e.g.
+      // Telegram redelivering after a slow reply) updates the existing row
+      // instead of raising a duplicate-key error.
+      await dbFetch('thoughts?on_conflict=dedup_key,user_id', {
         method: 'POST',
+        headers: { 'Prefer': 'resolution=merge-duplicates,return=representation' },
         body: JSON.stringify({ content: text, user_id: OWNER_USER_ID }),
       })
       await sendTelegramMessage(chatId, 'Saved to your brain.')

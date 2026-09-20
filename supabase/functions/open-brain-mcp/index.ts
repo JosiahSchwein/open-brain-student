@@ -86,8 +86,9 @@ async function callTool(name: string, args: Record<string, unknown>) {
   if (name === 'add_thought') {
     const content = String(args.content ?? '').trim()
     if (!content) return 'Please provide content to save.'
-    const rows = await dbFetch('thoughts', {
+    const rows = await dbFetch('thoughts?on_conflict=dedup_key,user_id', {
       method: 'POST',
+      headers: { 'Prefer': 'resolution=merge-duplicates,return=representation' },
       body: JSON.stringify({ content, user_id: OWNER_USER_ID }),
     })
     return `Saved: "${rows[0]?.content ?? content}"`
@@ -129,8 +130,6 @@ Deno.serve(async (req) => {
 
   const { id, method, params } = body
 
-  // JSON-RPC notifications have no "id" and must never receive a reply.
-  // Replying anyway is invalid and can make strict clients drop the connection.
   if (id === undefined || id === null) {
     return new Response(null, { status: 202, headers: corsHeaders })
   }

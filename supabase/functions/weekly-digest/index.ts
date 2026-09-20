@@ -96,8 +96,9 @@ Keep it under 250 words total. Write it directly to me, second person.`
     const { text } = await llmRes.json()
     const digestContent = `📊 Weekly Digest — ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}\n\n${text}`
 
-    await dbFetch('thoughts', {
+    await dbFetch('thoughts?on_conflict=dedup_key,user_id', {
       method: 'POST',
+      headers: { 'Prefer': 'resolution=merge-duplicates,return=representation' },
       body: JSON.stringify({
         content: digestContent,
         user_id: OWNER_USER_ID,

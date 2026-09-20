@@ -144,11 +144,11 @@ Deno.serve(async (req) => {
 
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
     const { data: thought, error: insertErr } = await admin.from('thoughts')
-      .insert({
+      .upsert({
         user_id: user.id,
         content,
         metadata: { title, video_id: videoId, video_url: videoUrl, has_transcript: result.hasTranscript, fetched_via: result.source },
-      })
+      }, { onConflict: 'dedup_key,user_id', ignoreDuplicates: false })
       .select('id').single()
     if (insertErr) throw insertErr
 
