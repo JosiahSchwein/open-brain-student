@@ -30,13 +30,33 @@ async function dbFetch(path: string, options: RequestInit = {}) {
   return res.json()
 }
 
+// Turns a search phrase into an embedding using your own generate-embedding
+// function. Returns null on any failure so search can fall back to keywords only.
+async function getEmbedding(text: string): Promise<number[] | null> {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/generate-embedding`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SERVICE_ROLE_KEY}`,
+      },
+      body: JSON.stringify({ text }),
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    return Array.isArray(data.embedding) ? data.embedding : null
+  } catch {
+    return null
+  }
+}
+
 const TOOLS = [
   {
     name: 'search_thoughts',
-    description: 'Search saved thoughts by keyword. Returns up to 10 matches.',
+    description: 'Search saved thoughts by meaning and by exact keywords, including details buried inside long captures. Returns up to 10 matches.',
     inputSchema: {
       type: 'object',
-      properties: { query: { type: 'string', description: 'Word or phrase to search for' } },
+      properties: { query: { type: 'string', description: 'Word, phrase, or question to search for' } },
       required: ['query'],
     },
   },
@@ -63,13 +83,30 @@ async function callTool(name: string, args: Record<string, unknown>) {
   if (name === 'search_thoughts') {
     const query = String(args.query ?? '').trim()
     if (!query) return 'Please provide a search query.'
-    const rows = await dbFetch(
-      `thoughts?user_id=eq.${OWNER_USER_ID}&content=ilike.*${encodeURIComponent(query)}*&order=created_at.desc&limit=10`
-    )
+
+    const embedding = await getEmbedding(query)
+    const rpcBody: Record<string, unknown> = {
+      query_text: query,
+      p_user_id: OWNER_USER_ID,
+      match_count: 10,
+    }
+    if (embedding) rpcBody.query_embedding = embedding
+
+    const rows = await dbFetch('rpc/search_thoughts', {
+      method: 'POST',
+      body: JSON.stringify(rpcBody),
+    })
     if (!rows.length) return `No thoughts found matching "${query}".`
-    return rows.map((r: any, i: number) =>
-      `${i + 1}. [${r.created_at}] ${r.content}`
-    ).join('\n\n')
+
+    return rows.map((r: any, i: number) => {
+      if (r.matched_chunk) {
+        const label = String(r.content).slice(0, 150).replace(/\s+/g, ' ')
+        return `${i + 1}. [${r.created_at}] ${label}...\n   Matched passage (from partway through a longer capture):\n   ${r.matched_chunk}`
+      }
+      const text = String(r.content)
+      const shown = text.length > 1500 ? text.slice(0, 1500) + '...' : text
+      return `${i + 1}. [${r.created_at}] ${shown}`
+    }).join('\n\n')
   }
 
   if (name === 'list_recent') {

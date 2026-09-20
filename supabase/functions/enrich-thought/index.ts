@@ -1,10 +1,15 @@
 // Supabase Edge Function: enrich-thought
 // Triggered by a database trigger on INSERT into thoughts.
 // Calls the LLM gateway for tags/category/summary, then generates and stores
-// an embedding for semantic search and graph linking.
+// an embedding for semantic search and graph linking, then chunks long
+// captures for paragraph-level retrieval (Level 7).
+
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { saveThoughtChunksSafe } from '../_shared/thought-chunks.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -126,6 +131,8 @@ ${content.slice(0, 3000)}
         console.error('enrich-thought: linking failed (non-fatal):', String(linkErr))
       }
     }
+
+    await saveThoughtChunksSafe(supabase, thoughtId, content, 'enrich-thought', 'summary')
 
     return ok()
   } catch (err) {

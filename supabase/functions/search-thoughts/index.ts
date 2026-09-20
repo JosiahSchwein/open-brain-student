@@ -1,6 +1,7 @@
 // Supabase Edge Function: search-thoughts
-// Semantic search: embeds the query, then finds thoughts whose embeddings
-// are closest in meaning — not closest in literal wording.
+// Hybrid search: combines meaning-based search (embeddings) with exact keyword
+// search, checks chunks inside long captures, and fuses the rankings.
+// If the embedding step fails, it falls back to keyword-only search.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -20,10 +21,26 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
+async function getEmbedding(text: string): Promise<number[] | null> {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/generate-embedding`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SERVICE_ROLE_KEY}` },
+      body: JSON.stringify({ text }),
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    return Array.isArray(data?.embedding) ? data.embedding : null
+  } catch {
+    return null
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders })
 
   try {
+    // Identify the caller from their own login token, never from the request body
     const authHeader = req.headers.get('Authorization') ?? ''
     const userClient = createClient(SUPABASE_URL, ANON_KEY, {
       global: { headers: { Authorization: authHeader } },
@@ -31,33 +48,32 @@ Deno.serve(async (req) => {
     const { data: { user }, error: authError } = await userClient.auth.getUser()
     if (authError || !user) return jsonResponse({ ok: false, error: 'Not signed in' }, 401)
 
-    const { query, matchCount } = await req.json()
+    const body = await req.json()
+    const query = body?.query
     if (!query || typeof query !== 'string') {
       return jsonResponse({ ok: false, error: 'A query is required' }, 400)
     }
 
-    const embResponse = await fetch(`${SUPABASE_URL}/functions/v1/generate-embedding`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SERVICE_ROLE_KEY}` },
-      body: JSON.stringify({ text: query }),
-    })
-    const embData = await embResponse.json()
-    const queryEmbedding = embData?.embedding
+    // Accept "limit" or the older "matchCount". Default 20, max 50.
+    const requested = Number(body?.limit ?? body?.matchCount)
+    const limit = Math.min(Math.max(Number.isFinite(requested) && requested > 0 ? Math.floor(requested) : 20, 1), 50)
 
-    if (!queryEmbedding) {
-      return jsonResponse({ ok: false, error: 'Could not generate a search embedding right now. Try again shortly.' }, 502)
+    // If this returns null, search still works using keywords only
+    const queryEmbedding = await getEmbedding(query)
+
+    const rpcArgs: Record<string, unknown> = {
+      query_text: query,
+      p_user_id: user.id,
+      match_count: limit,
     }
+    if (queryEmbedding) rpcArgs.query_embedding = queryEmbedding
 
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
-    const { data, error } = await admin.rpc('match_thoughts', {
-      query_embedding: queryEmbedding,
-      match_user_id: user.id,
-      match_count: matchCount || 10,
-    })
+    const { data, error } = await admin.rpc('search_thoughts', rpcArgs)
 
     if (error) throw error
 
-    return jsonResponse({ ok: true, results: data ?? [] })
+    return jsonResponse({ ok: true, results: data ?? [], keyword_only: !queryEmbedding })
   } catch (err) {
     console.error('search-thoughts error:', String(err))
     return jsonResponse({ ok: false, error: String(err) }, 500)
